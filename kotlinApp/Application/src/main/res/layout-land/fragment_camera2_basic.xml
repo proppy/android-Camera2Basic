@@ -17,8 +17,8 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <com.example.android.camera2basic.AutoFitTextureView
-        android:id="@+id/texture"
+    <SurfaceView
+        android:id="@+id/surfaceView"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_alignParentBottom="true"
@@ -32,7 +32,7 @@
         android:layout_alignParentBottom="true"
         android:layout_alignParentEnd="true"
         android:layout_alignParentTop="true"
-        android:layout_toEndOf="@id/texture"
+        android:layout_toEndOf="@id/surfaceView"
         android:background="@color/control_background"
         android:orientation="horizontal">
 

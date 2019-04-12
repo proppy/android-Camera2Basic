@@ -21,11 +21,7 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.graphics.ImageFormat
-import android.graphics.Matrix
-import android.graphics.Point
-import android.graphics.RectF
-import android.graphics.SurfaceTexture
+import android.graphics.*
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -45,11 +41,9 @@ import android.support.v4.content.ContextCompat
 import android.util.Log
 import android.util.Size
 import android.util.SparseIntArray
-import android.view.LayoutInflater
-import android.view.Surface
-import android.view.TextureView
-import android.view.View
-import android.view.ViewGroup
+import android.view.*
+import android.widget.ImageView
+import android.widget.Toast
 import java.io.File
 import java.util.Arrays
 import java.util.Collections
@@ -59,36 +53,15 @@ import kotlin.collections.ArrayList
 
 class Camera2BasicFragment : Fragment(), View.OnClickListener,
         ActivityCompat.OnRequestPermissionsResultCallback {
-
-    /**
-     * [TextureView.SurfaceTextureListener] handles several lifecycle events on a
-     * [TextureView].
-     */
-    private val surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-
-        override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
-            openCamera(width, height)
-        }
-
-        override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
-            configureTransform(width, height)
-        }
-
-        override fun onSurfaceTextureDestroyed(texture: SurfaceTexture) = true
-
-        override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
-
-    }
-
     /**
      * ID of the current [CameraDevice].
      */
     private lateinit var cameraId: String
 
     /**
-     * An [AutoFitTextureView] for camera preview.
+     * A [SurfaceView] for camera preview.
      */
-    private lateinit var textureView: AutoFitTextureView
+    private lateinit var surfaceView: SurfaceView
 
     /**
      * A [CameraCaptureSession] for camera preview.
@@ -138,24 +111,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
      * A [Handler] for running tasks in the background.
      */
     private var backgroundHandler: Handler? = null
-
-    /**
-     * An [ImageReader] that handles still image capture.
-     */
-    private var imageReader: ImageReader? = null
-
-    /**
-     * This is the output file for our picture.
-     */
-    private lateinit var file: File
-
-    /**
-     * This a callback object for the [ImageReader]. "onImageAvailable" will be called when a
-     * still image is ready to be saved.
-     */
-    private val onImageAvailableListener = ImageReader.OnImageAvailableListener {
-        backgroundHandler?.post(ImageSaver(it.acquireNextImage(), file))
-    }
+    private lateinit var imageView : ImageView
 
     /**
      * [CaptureRequest.Builder] for the camera preview
@@ -257,27 +213,22 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         view.findViewById<View>(R.id.picture).setOnClickListener(this)
         view.findViewById<View>(R.id.info).setOnClickListener(this)
-        textureView = view.findViewById(R.id.texture)
-    }
-
-    override fun onActivityCreated(savedInstanceState: Bundle?) {
-        super.onActivityCreated(savedInstanceState)
-        file = File(activity.getExternalFilesDir(null), PIC_FILE_NAME)
+        surfaceView = view.findViewById(R.id.surfaceView)
+        surfaceView.holder.addCallback(object: SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder?) {
+                openCamera(640, 480)
+            }
+            override fun surfaceDestroyed(holder: SurfaceHolder?) {
+            }
+            override fun surfaceChanged(holder: SurfaceHolder?, format: Int, width: Int, height: Int) {
+            }
+        })
+        imageView = ImageView(context)
     }
 
     override fun onResume() {
         super.onResume()
         startBackgroundThread()
-
-        // When the screen is turned off and turned back on, the SurfaceTexture is already
-        // available, and "onSurfaceTextureAvailable" will not be called. In that case, we can open
-        // a camera and start preview from here (otherwise, we wait until the surface is ready in
-        // the SurfaceTextureListener).
-        if (textureView.isAvailable) {
-            openCamera(textureView.width, textureView.height)
-        } else {
-            textureView.surfaceTextureListener = surfaceTextureListener
-        }
     }
 
     override fun onPause() {
@@ -314,7 +265,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
      * @param height The height of available size for camera preview
      */
     private fun setUpCameraOutputs(width: Int, height: Int) {
-        val manager = activity.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val manager = activity!!.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
             for (cameraId in manager.cameraIdList) {
                 val characteristics = manager.getCameraCharacteristics(cameraId)
@@ -333,20 +284,16 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
                 val largest = Collections.max(
                         Arrays.asList(*map.getOutputSizes(ImageFormat.JPEG)),
                         CompareSizesByArea())
-                imageReader = ImageReader.newInstance(largest.width, largest.height,
-                        ImageFormat.JPEG, /*maxImages*/ 2).apply {
-                    setOnImageAvailableListener(onImageAvailableListener, backgroundHandler)
-                }
 
                 // Find out if we need to swap dimension to get the preview size relative to sensor
                 // coordinate.
-                val displayRotation = activity.windowManager.defaultDisplay.rotation
+                val displayRotation = activity!!.windowManager.defaultDisplay.rotation
 
-                sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION)
+                sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) as Int
                 val swappedDimensions = areDimensionsSwapped(displayRotation)
 
                 val displaySize = Point()
-                activity.windowManager.defaultDisplay.getSize(displaySize)
+                activity!!.windowManager.defaultDisplay.getSize(displaySize)
                 val rotatedPreviewWidth = if (swappedDimensions) height else width
                 val rotatedPreviewHeight = if (swappedDimensions) width else height
                 var maxPreviewWidth = if (swappedDimensions) displaySize.y else displaySize.x
@@ -362,13 +309,6 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
                         rotatedPreviewWidth, rotatedPreviewHeight,
                         maxPreviewWidth, maxPreviewHeight,
                         largest)
-
-                // We fit the aspect ratio of TextureView to the size of preview we picked.
-                if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                    textureView.setAspectRatio(previewSize.width, previewSize.height)
-                } else {
-                    textureView.setAspectRatio(previewSize.height, previewSize.width)
-                }
 
                 // Check if the flash is supported.
                 flashSupported =
@@ -422,14 +362,13 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
      * Opens the camera specified by [Camera2BasicFragment.cameraId].
      */
     private fun openCamera(width: Int, height: Int) {
-        val permission = ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA)
+        val permission = ContextCompat.checkSelfPermission(activity as Context, Manifest.permission.CAMERA)
         if (permission != PackageManager.PERMISSION_GRANTED) {
             requestCameraPermission()
             return
         }
         setUpCameraOutputs(width, height)
-        configureTransform(width, height)
-        val manager = activity.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val manager = activity!!.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
             // Wait for camera to open - 2.5 seconds is sufficient
             if (!cameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
@@ -454,8 +393,6 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
             captureSession = null
             cameraDevice?.close()
             cameraDevice = null
-            imageReader?.close()
-            imageReader = null
         } catch (e: InterruptedException) {
             throw RuntimeException("Interrupted while trying to lock camera closing.", e)
         } finally {
@@ -491,13 +428,9 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
      */
     private fun createCameraPreviewSession() {
         try {
-            val texture = textureView.surfaceTexture
-
-            // We configure the size of default buffer to be the size of camera preview we want.
-            texture.setDefaultBufferSize(previewSize.width, previewSize.height)
 
             // This is the output Surface we need to start preview.
-            val surface = Surface(texture)
+            val surface = surfaceView.holder.surface
 
             // We set up a CaptureRequest.Builder with the output Surface.
             previewRequestBuilder = cameraDevice!!.createCaptureRequest(
@@ -506,7 +439,7 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
             previewRequestBuilder.addTarget(surface)
 
             // Here, we create a CameraCaptureSession for camera preview.
-            cameraDevice?.createCaptureSession(Arrays.asList(surface, imageReader?.surface),
+            cameraDevice?.createCaptureSession(Arrays.asList(surface),
                     object : CameraCaptureSession.StateCallback() {
 
                         override fun onConfigured(cameraCaptureSession: CameraCaptureSession) {
@@ -533,46 +466,13 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
                         }
 
                         override fun onConfigureFailed(session: CameraCaptureSession) {
-                            activity.showToast("Failed")
+                            activity!!.showToast("Failed")
                         }
                     }, null)
         } catch (e: CameraAccessException) {
             Log.e(TAG, e.toString())
         }
 
-    }
-
-    /**
-     * Configures the necessary [android.graphics.Matrix] transformation to `textureView`.
-     * This method should be called after the camera preview size is determined in
-     * setUpCameraOutputs and also the size of `textureView` is fixed.
-     *
-     * @param viewWidth  The width of `textureView`
-     * @param viewHeight The height of `textureView`
-     */
-    private fun configureTransform(viewWidth: Int, viewHeight: Int) {
-        activity ?: return
-        val rotation = activity.windowManager.defaultDisplay.rotation
-        val matrix = Matrix()
-        val viewRect = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
-        val bufferRect = RectF(0f, 0f, previewSize.height.toFloat(), previewSize.width.toFloat())
-        val centerX = viewRect.centerX()
-        val centerY = viewRect.centerY()
-
-        if (Surface.ROTATION_90 == rotation || Surface.ROTATION_270 == rotation) {
-            bufferRect.offset(centerX - bufferRect.centerX(), centerY - bufferRect.centerY())
-            val scale = Math.max(
-                    viewHeight.toFloat() / previewSize.height,
-                    viewWidth.toFloat() / previewSize.width)
-            with(matrix) {
-                setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
-                postScale(scale, scale, centerX, centerY)
-                postRotate((90 * (rotation - 2)).toFloat(), centerX, centerY)
-            }
-        } else if (Surface.ROTATION_180 == rotation) {
-            matrix.postRotate(180f, centerX, centerY)
-        }
-        textureView.setTransform(matrix)
     }
 
     /**
@@ -619,12 +519,12 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
     private fun captureStillPicture() {
         try {
             if (activity == null || cameraDevice == null) return
-            val rotation = activity.windowManager.defaultDisplay.rotation
+            val rotation = activity!!.windowManager.defaultDisplay.rotation
 
             // This is the CaptureRequest.Builder that we use to take a picture.
             val captureBuilder = cameraDevice?.createCaptureRequest(
                     CameraDevice.TEMPLATE_STILL_CAPTURE)?.apply {
-                addTarget(imageReader?.surface)
+                addTarget(surfaceView.holder.surface)
 
                 // Sensor orientation is 90 for most devices, or 270 for some devices (eg. Nexus 5X)
                 // We have to take that into account and rotate JPEG properly.
@@ -637,23 +537,25 @@ class Camera2BasicFragment : Fragment(), View.OnClickListener,
                 set(CaptureRequest.CONTROL_AF_MODE,
                         CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
             }?.also { setAutoFlash(it) }
-
             val captureCallback = object : CameraCaptureSession.CaptureCallback() {
-
-                override fun onCaptureCompleted(session: CameraCaptureSession,
-                        request: CaptureRequest,
-                        result: TotalCaptureResult) {
-                    activity.showToast("Saved: $file")
-                    Log.d(TAG, file.toString())
-                    unlockFocus()
+                    override fun onCaptureCompleted(session: CameraCaptureSession,
+                                                    request: CaptureRequest,
+                                                    result: TotalCaptureResult) {
+                        val bitmap = Bitmap.createBitmap(surfaceView.measuredWidth, surfaceView.measuredHeight, Bitmap.Config.ARGB_8888)
+                        PixelCopy.request(surfaceView, bitmap, {
+                            imageView.setImageBitmap(bitmap)
+                            val toast = Toast(context)
+                            toast.view = imageView
+                            toast.show()
+                            unlockFocus()
+                        }, backgroundHandler!!)
+                    }
                 }
-            }
-
-            captureSession?.apply {
-                stopRepeating()
-                abortCaptures()
-                capture(captureBuilder?.build(), captureCallback, null)
-            }
+                captureSession?.apply {
+                    stopRepeating()
+                    abortCaptures()
+                    capture(captureBuilder!!.build(), captureCallback, null)
+                }
         } catch (e: CameraAccessException) {
             Log.e(TAG, e.toString())
         }
